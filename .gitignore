@@ -1,0 +1,10 @@
+# Never commit live credentials — only the *.example templates are tracked.
+.env
+.secrets
+
+# Python
+__pycache__/
+*.pyc
+
+# Local backups
+*.bak-*

@@ -1,0 +1,50 @@
+# intel-loader — daily MISP intel pipeline: staggered feed refresh -> export IOCs to
+# Wazuh CDB -> reliable manager reload (wazuh-control restart via docker socket).
+# Joins the Wazuh API network + MISP's network (MISP DB needed only for MISP_EXPORT_MODE=db).
+# Mounts docker.sock for WAZUH_RELOAD=docker; set WAZUH_RELOAD=api for non-docker setups.
+services:
+  intel-loader:
+    image: ${INTEL_IMAGE:-python:3.12-slim}
+    container_name: intel-loader
+    restart: always
+    env_file:
+      # `required:` needs Docker Compose v2.24+. On older versions, use the short form
+      # (`- .env`) and create an empty `.secrets` if you don't use keyed feeds.
+      - path: .env       # REQUIRED — ADMIN_KEY, WAZUH_PASS (+ MISP_DB_PASS for db mode) — see .env.example
+        required: true
+      - path: .secrets   # OPTIONAL — keyed-feed keys — see .secrets.example (safe to omit)
+        required: false
+    environment:
+      # Adjust these to match your Docker Compose service names.
+      # These defaults assume MISP and Wazuh are in the same Docker Compose stack.
+      - MISP_EXPORT_MODE=${MISP_EXPORT_MODE:-api}    # api (REST, no DB) | db (direct MySQL)
+      - WAZUH_RELOAD=${WAZUH_RELOAD:-docker}          # docker (exec) | api (REST restart)
+      - MISP_URL=https://misp-core
+      - MISP_DB_HOST=db
+      - MISP_DB_USER=misp
+      - MISP_DB_NAME=misp
+      - WAZUH_API=https://wazuh.manager:55000
+      - WAZUH_USER=wazuh-wui
+      # Set WAZUH_MGR_CONTAINER to your wazuh.manager container name
+      # (check: docker ps --format '{{.Names}}' | grep wazuh)
+      - WAZUH_MGR_CONTAINER=${WAZUH_MGR_CONTAINER:-wazuh.manager-1}
+      - PER_LIST_CAP=${PER_LIST_CAP:-200000}
+      - REFRESH_SECONDS=${REFRESH_SECONDS:-86400}
+      - REFRESH_BATCH=${REFRESH_BATCH:-6}
+      - DO_REFRESH=${DO_REFRESH:-1}
+      - MAX_IOC_AGE_DAYS=${MAX_IOC_AGE_DAYS:-180}
+      - GN_DAILY_CAP=${GN_DAILY_CAP:-40}
+    volumes:
+      - ./misp_to_wazuh.py:/app/misp_to_wazuh.py:ro
+      - /var/run/docker.sock:/var/run/docker.sock   # for `wazuh-control restart` in the manager
+    command: ["sh","-c","pip install --quiet --no-cache-dir requests urllib3 pymysql docker >/dev/null 2>&1 && exec python /app/misp_to_wazuh.py loop"]
+    networks: [socnet, misp-net]
+
+networks:
+  socnet:
+    external: true
+  misp-net:
+    external: true
+    # Set this to your MISP Docker Compose network name.
+    # Check: docker network ls | grep misp
+    name: <YOUR_MISP_PROJECT>_misp-net

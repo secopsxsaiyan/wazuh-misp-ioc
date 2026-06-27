@@ -1,0 +1,93 @@
+<group name="threat_intel,misp,">
+
+  <!-- ============================================================
+       MISP CDB-list IOC matching. The included loader exports to_ids
+       indicators from MISP into etc/lists/misp-{ip,domains,hashes};
+       these rules consult those lists. Deploy the lists into your
+       manager's etc/lists/ directory and declare them in ossec.conf.
+       ============================================================ -->
+
+  <!-- IP indicators. Two layers:
+       - BASE (100210/100211): fire on ANY event carrying a matching src/dst IP. No
+         firewall/decoder fields required — works in any Wazuh deployment out of the box. L12.
+       - OPTIONAL block-state overlay (100216/100217): child rules that fire only when the
+         event ALSO carries a firewall drop/deny action, de-escalating an already-blocked hit
+         to L9 (below the L10 triage gate) so blocked scans don't page. They key on
+         unifi.fw_action=D by DEFAULT — change the field name / value to match YOUR firewall's
+         decoder (e.g. action=deny, fw_action=DROP). If your events have no such field these
+         simply never fire and the base L12 alert stands — nothing to remove. -->
+
+  <!-- BASE L12: malicious srcip in any event (actionable) -->
+  <rule id="100210" level="12">
+    <list field="srcip" lookup="address_match_key">etc/lists/misp-ip</list>
+    <description>MISP threat intel: source IP matched a known-malicious indicator</description>
+    <group>threat_intel,misp_ioc,</group>
+  </rule>
+  <!-- BASE L12: malicious dstip in any event (actionable) -->
+  <rule id="100211" level="12">
+    <list field="dstip" lookup="address_match_key">etc/lists/misp-ip</list>
+    <description>MISP threat intel: destination IP matched a known-malicious indicator</description>
+    <group>threat_intel,misp_ioc,</group>
+  </rule>
+
+  <!-- OPTIONAL overlay L9: srcip hit that was already DROPPED by the firewall (child of 100210).
+       Adapt the field below to your firewall decoder. -->
+  <rule id="100216" level="9">
+    <if_sid>100210</if_sid>
+    <field name="unifi.fw_action">^D$</field>
+    <description>MISP threat intel: malicious source IP in firewall DROP (already blocked)</description>
+    <group>threat_intel,misp_ioc,firewall_drop,</group>
+  </rule>
+  <!-- OPTIONAL overlay L9: dstip hit that was already DROPPED (child of 100211). -->
+  <rule id="100217" level="9">
+    <if_sid>100211</if_sid>
+    <field name="unifi.fw_action">^D$</field>
+    <description>MISP threat intel: malicious destination IP in firewall DROP (already blocked)</description>
+    <group>threat_intel,misp_ioc,firewall_drop,</group>
+  </rule>
+  <!-- OPTIONAL overlay L11: an INTERNAL (RFC1918) source matching a MISP indicator is
+       actionable even when blocked — it implies a LAN host is itself flagged/compromised
+       (beaconing to known infra). Re-escalate that subset from L9 (100216) to L11, above the
+       L10 triage gate; external blocked sources stay at L9.
+       Wazuh accepts a SINGLE CIDR per <srcip>; 10.0.0.0/8 is a broad example — set it to your
+       own RFC1918 range. -->
+  <rule id="100218" level="11">
+    <if_sid>100216</if_sid>
+    <srcip>10.0.0.0/8</srcip>
+    <description>MISP threat intel: INTERNAL source IP matched a malicious indicator — possible compromised LAN host</description>
+    <group>threat_intel,misp_ioc,</group>
+    <mitre><id>T1071</id></mitre>
+  </rule>
+
+  <!-- Hash indicators (active): match FIM (syscheck) file hashes against the MISP CDB.
+       Fires on real FIM events (rules 550/554), which carry sha256_after/md5_after/sha1_after.
+       Covers the large pool of hash IOCs that FIM can natively surface with no extra integration. -->
+  <rule id="100212" level="12">
+    <if_sid>550,554</if_sid>
+    <list field="sha256_after" lookup="match_key">etc/lists/misp-hashes</list>
+    <description>MISP threat intel: a monitored file's SHA256 matched a known-malicious hash</description>
+    <group>threat_intel,misp_ioc,</group>
+  </rule>
+  <rule id="100213" level="12">
+    <if_sid>550,554</if_sid>
+    <list field="md5_after" lookup="match_key">etc/lists/misp-hashes</list>
+    <description>MISP threat intel: a monitored file's MD5 matched a known-malicious hash</description>
+    <group>threat_intel,misp_ioc,</group>
+  </rule>
+  <rule id="100215" level="12">
+    <if_sid>550,554</if_sid>
+    <list field="sha1_after" lookup="match_key">etc/lists/misp-hashes</list>
+    <description>MISP threat intel: a monitored file's SHA1 matched a known-malicious hash</description>
+    <group>threat_intel,misp_ioc,</group>
+  </rule>
+
+  <!-- Domain indicators (forward-looking): activates once a DNS log source
+       (Suricata/Zeek eve.json, or sysmon-for-linux DNS) populates dns.rrname.
+       Pre-staged so domain IOCs match as soon as such a source is onboarded. -->
+  <rule id="100214" level="12">
+    <list field="dns.rrname" lookup="match_key">etc/lists/misp-domains</list>
+    <description>MISP threat intel: a DNS query matched a known-malicious domain</description>
+    <group>threat_intel,misp_ioc,</group>
+  </rule>
+
+</group>
