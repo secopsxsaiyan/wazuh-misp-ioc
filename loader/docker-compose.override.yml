@@ -1,0 +1,8 @@
+# Memory limit override — applied via: docker compose up -d --no-deps --force-recreate intel-loader
+# Do NOT edit the base docker-compose.yml for resource limits; use this file.
+services:
+  intel-loader:
+    deploy:
+      resources:
+        limits:
+          memory: 256m
